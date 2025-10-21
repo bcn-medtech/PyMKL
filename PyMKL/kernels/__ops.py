@@ -8,7 +8,7 @@ import sak
 
 from scipy.spatial.distance import pdist, cdist, squareform
 
-KERNEL_LIST = ("euclidean", "euclidean_density", "categorical", "ordinal", "xcorr", "euclidean_xcorr", "default")
+KERNEL_LIST = ("euclidean", "euclidean_density", "categorical", "categorical_MATLAB", "ordinal", "xcorr", "euclidean_xcorr", "default")
 
 def euclidean_xcorr(x: np.ndarray, y: np.ndarray = None, knn: int = None, alpha: float = -1, maxlags: int = 0, **kwargs):
     # Obtain pairwise distances
@@ -57,7 +57,11 @@ def euclidean(x: np.ndarray, y: np.ndarray = None, knn: int = None, alpha: float
         use_pdist = True
         y = x.copy()
     else:
-        y = y.copy().squeeze()
+        # TODO: IF A SINGLE SAMPLE DO NOT SQUEEZE
+        if len(y)==1:
+            y = y.copy()
+        else:
+            y = y.copy().squeeze()
         if y.ndim == 1:
             y = y[:,None]
         if y.ndim != 2:
@@ -82,11 +86,11 @@ def euclidean(x: np.ndarray, y: np.ndarray = None, knn: int = None, alpha: float
     inf_distances[inf_distances < np.finfo(distances.dtype).eps] = np.inf
 
     # Sort these distances and retrieve the <knn>-th most similar elements for computing sigma
-    inf_distances_sorted = np.sort(inf_distances,axis=0)
-    sigma = np.mean(inf_distances_sorted[:min([knn,N]),:])
+    inf_distances_sorted = np.sort(inf_distances, axis=0)
+    sigma = np.mean(inf_distances_sorted[:min([knn, N]),:])
 
     # Obtain kernel value
-    K = np.exp(alpha*(np.square(distances) / (2.*(sigma)**2.)))
+    K = np.exp(alpha*(np.square(distances) / (2. * sigma ** 2.)))
     var = np.var(K)
 
     return K,var,sigma
@@ -144,14 +148,15 @@ def euclidean_density(x: np.ndarray, y: np.ndarray = None, knn: int = None, alph
 def categorical(x: np.ndarray, y: np.ndarray = None, alpha: float = 1.0, random: float = 0.0, zero_method: str = "min", eye: bool = False, *args, **kwargs):
     """https://upcommons.upc.edu/bitstream/handle/2099.1/17172/MarcoVillegas.pdf"""
     x = x.copy().squeeze()
+    x = x.astype(int)
     if x.ndim > 1:
         raise ValueError("Categorical kernel must take 1D inputs")
     # If y is None, copy x
     if y is None:
         y = x.copy()
     else:
-        y = y.copy().squeeze()
-
+        y = y.copy().squeeze() if len(y)>1 else y.copy()
+    y = y.astype(int)
     # Count occurrences of each category    
     counts_x = np.bincount(x)
     unique_x = np.unique(x)
@@ -165,7 +170,7 @@ def categorical(x: np.ndarray, y: np.ndarray = None, alpha: float = 1.0, random:
         counts_y = counts_y[1:]
 
     # Compute probability of each category in population
-    prob_x,prob_y = np.zeros((len(x),)),np.zeros((len(y),))
+    prob_x, prob_y = np.zeros((len(x),)),np.zeros((len(y),))
     for i,u in enumerate(unique_x):
         prob_x[x == u] = counts_x[i]/len(x)
     for i,u in enumerate(unique_y):
@@ -177,7 +182,7 @@ def categorical(x: np.ndarray, y: np.ndarray = None, alpha: float = 1.0, random:
 
     # Add values when proba is zero (modified from Marco Villegas)
     if zero_method == "min":
-        K[K == 0] = np.clip(np.min(prob)/2,0,1)
+        K[K == 0] = np.clip(np.min(prob)/4,0,1)
     else:
         K[K == 0] = np.clip(np.min(prob)-0.05,0,1)
     
@@ -198,7 +203,7 @@ def ordinal(x: np.ndarray, y: np.ndarray = None, *args, **kwargs):
     if y is None:
         y = x.copy()
     else:
-        y = y.copy().squeeze()
+        y = y.copy().squeeze() if len(y)>1 else y.copy()
     if x.ndim != y.ndim:
         raise ValueError("x and y vectors have different depth")
 
@@ -207,12 +212,14 @@ def ordinal(x: np.ndarray, y: np.ndarray = None, *args, **kwargs):
         x_range = np.max(np.concatenate((x,y))) - np.min(np.concatenate((x,y)))
         distances = np.abs(x[:,None] - y[None,])
     elif x.ndim == 2:
-        distances = cdist(x,y,metric="euclidean")
+        distances = cdist(x, y,metric="euclidean")
         x_range = np.max(distances) - np.min(distances)
     else:
         raise ValueError("Ordinal kernel must take 1D or 2D inputs")
-
-    K = (x_range - distances)/x_range
+    if x_range ==0:
+        K = np.ones((len(x), len(y)))
+    else:
+        K = (x_range - distances)/x_range
 
     return K,1,1
 
@@ -226,18 +233,56 @@ def default(x: np.ndarray, y: np.ndarray = None, *args, **kwargs):
     if y is None:
         y = x.copy()
     else:
-        y = y.copy().squeeze()
-
+        if len(y)==1:
+            y=y.copy()
+        else:
+            y = y.copy().squeeze()
     if x.ndim != y.ndim:
         raise ValueError("x and y vectors have different depth")
 
     # Compute kernel
-    K = (x[:,None] == y[None,]).clip(min=0.9)
+    K = (x[:,None] == y[None,]).clip(min=0.5, max=0.9)
 
     return K,1,1
 
+def categorical_MATLAB(x: np.ndarray, y: np.ndarray = None, alpha=1.0, *args, **kwargs):
+    x = x.copy().squeeze().astype(int)
+    # If y is None, copy x
+    if y is None:
+        y = x.copy()
+    else:
+        y = y.copy().squeeze().astype(int)
+    if x.ndim != y.ndim:
+        raise ValueError("x and y vectors have different depth")
 
-def kernel_stack(X: Union[List[np.ndarray],Dict[Any,np.ndarray]], kernel: Union[str,List[str]] = "euclidean", knn: int = None, alpha: float = -1, return_sigmas: bool = False) -> Tuple[np.ndarray,np.ndarray]:
+    # Compute kernel
+    bins_x = np.unique(x)
+    counts_x = np.bincount(x)
+    bins_y = np.unique(x)
+    counts_y = np.bincount(y)
+
+    prob_x = np.zeros(x.shape)
+    prob_y = np.zeros(y.shape)
+
+    for i, bin_val in enumerate(bins_x):
+        prob_x[x == bin_val] = counts_x[i] / len(x)
+    for i, bin_val in enumerate(bins_y):
+        prob_y[y == bin_val] = counts_y[i] / len(y)
+
+    prob = np.sqrt((prob_x[:, None] * prob_y[None, :]))
+    K = (x[:, None] == y[None,])
+    K = K * (1 - prob ** alpha) ** (1 / alpha)
+
+    if np.min(prob) > 0.05:
+        K[K == 0] = np.clip(np.min(prob)/4,0,1)
+    return K,1,1
+
+def kernel_stack(X: Union[List[np.ndarray],Dict[Any,np.ndarray]],
+                 Y: Union[List[np.ndarray],Dict[Any,np.ndarray]] = None,
+                 kernel: Union[str,List[str]] = "euclidean",
+                 knn: int = None,
+                 alpha: float = -1,
+                 return_sigmas: bool = False) -> Tuple[np.ndarray,np.ndarray]:
     """Obtain kernels from list of features through a metric. Current metric is 
     squareform(pdist(x,metric="euclidean")), but any metric that operates on a 
     matrix M ∈ [S x L], where S is the number of samples in the population and L
@@ -258,50 +303,66 @@ def kernel_stack(X: Union[List[np.ndarray],Dict[Any,np.ndarray]], kernel: Union[
     # Retrieve dimensions
     M = len(X) # Number of different features to work with
     if isinstance(X,List):
-        N = X[0].shape[0] # Number of samples in the population
+        Nx = X[0].shape[0]  # Number of samples in the training population
+        if Y:
+            Ny = Y[0].shape[0]
     elif isinstance(X,Dict):
         keys = list(X)
-        N = X[keys[0]].shape[0]
+        Nx = X[keys[0]].shape[0] # Number of samples in the training population
+        if Y:
+            Ny = Y[keys[0]].shape[0]
     
     # Apply default number of nearest neighbours
     if knn is None:
-        knn = math.floor(np.sqrt(N))
+        knn = math.floor(np.sqrt(Nx))
 
     # Check kernel in valid kernels
     per_kernel = False
     if isinstance(kernel, str):
         if kernel not in KERNEL_LIST:
             raise ValueError(f"Valid kernels are: {KERNEL_LIST}")
+        alpha = 1 if kernel in ['categorical', 'categorical_MATLAB'] else -1
         kernel = eval(kernel)
         per_kernel = False
     elif isinstance(kernel, (list, tuple)):
+        alpha = []
         for k in kernel:
             if k not in KERNEL_LIST:
                 raise ValueError(f"Valid kernels are: {KERNEL_LIST}. Provided kernel: {k}")
+            else:
+                alpha.append(1 if k in ['categorical', 'categorical_MATLAB'] else -1)
         kernel = [eval(k) for k in kernel]
         assert len(kernel) == len(X), "Invalid kernel configuration. Must be of the same size of X"
         per_kernel = True
     else:
         raise ValueError(f"Kernel type not supported. Valid kernels are: {KERNEL_LIST} or a list of them")
-        
+
     # Create matrix
-    K = np.zeros((M, N, N), dtype='float64')
+    if not Y:
+        K = np.zeros((M, Nx, Nx), dtype='float64')
+    else:
+        K = np.zeros((M, Nx, Ny), dtype='float64')
     var = np.zeros((M,), dtype='float64')
     sigmas = np.zeros((M,), dtype='float64')
 
     # Compute pairwise distances
     for m,k in enumerate(X):
         # Retrieve the feature according to its input data type
-        if isinstance(X,List):
-            feature = X[m] 
+        test = None
+        if isinstance(X, List):
+            feature = X[m]
+            if Y:
+                test = Y[m]
         elif isinstance(X,Dict):
             feature = X[k]
+            if Y:
+                test = Y[k]
 
         # Obtain kernel value
         if per_kernel:
-            K[m],var[m],sigmas[m] = kernel[m](feature,knn=knn,alpha=alpha)
+            K[m],var[m],sigmas[m] = kernel[m](feature, test, knn=knn,alpha=alpha[m])
         else:
-            K[m],var[m],sigmas[m] = kernel(feature,knn=knn,alpha=alpha)
+            K[m],var[m],sigmas[m] = kernel(feature, test, knn=knn,alpha=alpha)
 
     if return_sigmas:
         return K, var, sigmas

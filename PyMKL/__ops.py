@@ -76,7 +76,6 @@ class MKL():
         if not self.update_betas:
             warnings.warn("BEWARE! 'update_betas' is set to FALSE! This is discouraged unless you know what you are doing!")
 
-
     def __compute_SWB_caller(self):  # solve for A (generalized eigenvalue problem)
         # compute sides of GEP
         if (self.lib == "cpp") and (PyMKL.lib.cpp is not None):
@@ -245,6 +244,10 @@ class MKL():
                     print("Converged!")
             else:
                 print("Computing projection without betas...")
+                # betas = [1 / 32] * 6
+                # betas.extend([1 / 16] * 13)
+                # betas = np.array(betas)
+                # betas = np.reshape(betas, (19, 1))
                 self.__compute_SWB_caller()
                 print("Computed!")
         else:

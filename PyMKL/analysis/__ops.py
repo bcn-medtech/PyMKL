@@ -28,7 +28,9 @@ def INEXACT_Bermanis_4DATA(Ge_s, f, embedding, direction, e_s, gamma):
     # step 5
     p = direction.shape[0]
     l = f_s.shape[0]
-    f_star_s = np.zeros((f_s.shape[1],p))
+    x = f_s.shape[1] if len(f_s.shape)>1 else 1
+    f_star_s = np.zeros((x, p))
+    # f_star_s = np.zeros((f_s.shape[1],p))
 
     for j in range(p):
         tmp = np.matlib.repmat(direction[j,:], l ,1)
@@ -51,7 +53,13 @@ def get_sample(Features: List[Union[np.ndarray, list]], index: int):
 
     return point_features
 
-def get_variability_descriptors(embedding: np.ndarray, Features: List[Union[np.ndarray, list]], dimensions: Union[None,int,list] = None, direction: np.ndarray = None, gamma: Union[float,np.ndarray] = None, max_iterations: int = 20, NN_dims: Union[int,None] = None):
+def get_variability_descriptors(embedding: np.ndarray,
+                                Features: List[Union[np.ndarray, list]],
+                                dimensions: Union[None,int,list, np.ndarray] = None,
+                                direction: np.ndarray = None,
+                                gamma: Union[float, np.ndarray] = None,
+                                max_iterations: int = 20,
+                                NN_dims: Union[int,None] = None):
     """
     Arguments:
     * Features: List[Union[np.ndarray, list]]
@@ -84,38 +92,39 @@ def get_variability_descriptors(embedding: np.ndarray, Features: List[Union[np.n
     dimensions = np.array(dimensions)
 
     # Get subset of interesting dimensions
-    embedding_reduced = embedding[:,:NN_dims]
+    embedding_reduced = embedding[:, :NN_dims]
 
     # Populate optional parameters
     if gamma is None:
         gamma = 1
-    if isinstance(gamma,(int,float,np.integer,np.floating)):
-        gamma = np.full((len(Features),),gamma)
+    if isinstance(gamma, (int, float, np.integer, np.floating)):
+        gamma = np.full((len(Features),), gamma)
     gamma = np.array(gamma)
 
     # Get distance of every projected element to each other
     embedding_distance = sp.spatial.distance.squareform(sp.spatial.distance.pdist(embedding_reduced)) 
     embedding_distance_density = embedding_distance + np.diag(np.full((embedding_reduced.shape[0],),np.inf)) ## put diagonal coefficients to -1
-    embedding_distance_density = np.min(embedding_distance_density, 0) ## find closest neighbour
+    embedding_distance_density = np.min(embedding_distance_density, 0)  # find closest neighbour
     diameter = np.max(embedding_distance)
     density = np.mean(embedding_distance_density)
 
     # Iterator depending if it's list (first N dimensions) or list (specific dimensions)
-    if isinstance(dimensions,np.integer):
+    if isinstance(dimensions, np.integer):
         dimensions = np.arange(dimensions)
 
     # MSE Algorithm - same in every iteration, take out of loop for efficiency
     if direction is None:
-        embedding_mean = np.mean(embedding_reduced,axis=0)
-        direction = np.zeros((len(dimensions)*5,embedding_reduced.shape[1]))
+        xs = np.linspace(-2, 2, 9)
+        embedding_mean = np.mean(embedding_reduced, axis=0)
+        direction = np.zeros((len(dimensions)*len(xs), embedding_reduced.shape[1]))
 
-        for i,d in enumerate(dimensions):
-            std = np.std(embedding_reduced[:,d],ddof=1)
-            variability = np.array([-2*std,-std,0,std,2*std])
+        for i, d in enumerate(dimensions):
+            std = np.std(embedding_reduced[:, d], ddof=1)
+            variability = np.array([x*std for x in xs])
 
-            for j,var in enumerate(variability):
-                direction[5*i+j,:] = embedding_mean
-                direction[5*i+j,i] = direction[5*i+j,i] + var
+            for j, var in enumerate(variability):
+                direction[len(xs)*i+j, :] = embedding_mean
+                direction[len(xs)*i+j, i] = direction[len(xs)*i+j, i] + var
     else:
         # If provided, take NN_dims dimensions
         direction = direction.copy()[:,:NN_dims]
@@ -127,8 +136,11 @@ def get_variability_descriptors(embedding: np.ndarray, Features: List[Union[np.n
     for n,f in enumerate(tqdm.tqdm(Features)):
         s = 0
         F_s_old = np.zeros_like(f)
-        F_star_s_old = np.zeros((f.shape[0],direction.shape[0]))
-        while (s <= max_iterations ) & ((diameter/2**s) > (2*density)):
+
+        dim1 = f.shape[0] if len(f.shape) > 1 else 1
+        F_star_s_old = np.zeros((dim1, direction.shape[0]))
+
+        while (s <= max_iterations ) & ((diameter/2**s) > density):
             # Kernel bandwidth
             e_s = diameter/2**s
             Ge_s = np.exp( -embedding_distance**2 / (2*(e_s)**2) );
@@ -221,13 +233,13 @@ def regression_line_points(embedding: np.ndarray, point_from: np.ndarray, point_
     # Treat inputs - dimensions
     if dimensions is None:
         dimensions = embedding.shape[1]
-    if isinstance(dimensions,(int,np.integer)):
+    if isinstance(dimensions, (int, np.integer)):
         dimensions = np.arange(dimensions)
     dimensions = np.array(dimensions)
     
     # Fill points with mean/median data according to metric
     if point_from.size < dimensions.size:
-        point_from = np.concatenate((point_from,metric(embedding[:,point_from.size:],axis=0)))
+        point_from = np.concatenate((point_from, metric(embedding[:,point_from.size:], axis=0)))
     if point_to.size   < dimensions.size:
         point_to   = np.concatenate((point_to,  metric(embedding[:,point_to.size:  ],axis=0)))
         
@@ -301,7 +313,7 @@ def embedding_self_correlation(embedding: np.ndarray, display_dimensions: bool =
         iterator = tqdm.tqdm(range(1,M+1))
     except ModuleNotFoundError:
         iterator = range(1,M+1)
-
+    print(iterator)
     for dim in iterator:
         if dim == 1: # Keep tqdm with M iterations for easier understanding
             continue
@@ -338,7 +350,7 @@ def embedding_self_correlation(embedding: np.ndarray, display_dimensions: bool =
             M_min = dim-1
             break
 
-    return self_correlation,M_min
+    return self_correlation, M_min
 
 
 def cluster_MKR(embedding: np.ndarray, Features: List[np.ndarray], clusters: np.ndarray, dimensions: Union[None,int,np.ndarray] = None, NN_dims: Union[int,None] = None, return_embeddings: bool = False):
